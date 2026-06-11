@@ -9,11 +9,8 @@ A powerful AI assistant that can search the web, perform calculations, and gener
 \*\*\[Click here to try the live app](https://ai-agent-hk4rpybstfld23lwokqduz.streamlit.app/)\*\*
 
 
-🔗 Links
-
-GitHub: github.com/Aikaksh-Singh-Routela/ai-agent
-
-AI Image Generator: ai-art-generator-ochre.vercel.app
+GitHub: https://github.com/Aikaksh-Singh-Routela/ai-agent
+AI Image Generator: https://ai-art-generator-ochre.vercel.app
 
 ## 🛠️ Features
 
