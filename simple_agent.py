@@ -1,28 +1,23 @@
 import streamlit as st
-
-# At the start of your app, add:
-groq_api_key = st.secrets["GROQ_API_KEY"]
-tavily_api_key = st.secrets["TAVILY_API_KEY"]
-
-from dotenv import load_dotenv
-load_dotenv()
-
 import os
 import requests
 import json
 import time
-import streamlit as st
 from groq import Groq
 
+# Load API keys from Streamlit secrets
+groq_api_key = st.secrets["GROQ_API_KEY"]
+tavily_api_key = st.secrets["TAVILY_API_KEY"]
+
 # Initialize Groq client
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+client = Groq(api_key=groq_api_key)
 
 # Available tools
 def web_search(query: str) -> str:
     """Search the web"""
     try:
         from tavily import TavilyClient
-        tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+        tavily = TavilyClient(api_key=tavily_api_key)
         result = tavily.search(query, max_results=2)
         return "\n".join([r["content"] for r in result.get("results", [])])
     except Exception as e:
@@ -56,8 +51,8 @@ def generate_image(prompt: str) -> str:
         print(f"🆔 Job ID: {job_id}")
         print(f"⏳ Waiting for image to generate...")
         
-        # Wait up to 3 minutes (36 checks x 5 seconds = 180 seconds)
-        for attempt in range(120):  # 120 x 5 seconds = 10 minutes
+        # Wait up to 10 minutes (120 checks x 5 seconds = 600 seconds)
+        for attempt in range(120):
             time.sleep(5)
             status = requests.get(f"https://aihorde.net/api/v2/generate/status/{job_id}", timeout=30)
             data = status.json()

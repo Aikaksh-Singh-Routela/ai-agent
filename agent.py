@@ -32,7 +32,7 @@ def calculate(expression: str) -> str:
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0.7,
-    api_key="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"
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
 prompt = ChatPromptTemplate.from_messages([
