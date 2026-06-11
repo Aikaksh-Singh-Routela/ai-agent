@@ -10,6 +10,7 @@ A powerful AI assistant that can search the web, perform calculations, and gener
 
 
 GitHub: https://github.com/Aikaksh-Singh-Routela/ai-agent
+
 AI Image Generator: https://ai-art-generator-ochre.vercel.app
 
 ## 🛠️ Features
