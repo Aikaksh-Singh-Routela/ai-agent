@@ -5,6 +5,9 @@ import json
 import time
 from groq import Groq
 from tavily import TavilyClient
+from PIL import Image
+from io import BytesIO
+import tempfile
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
@@ -16,7 +19,34 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
-# Tavily search function
+# ============================================
+# IMAGE GENERATION FUNCTION (Pollinations.ai)
+# ============================================
+def generate_image(prompt, width=512, height=512):
+    """Generate an image using Pollinations.ai (free, no API key needed)"""
+    try:
+        # URL encode the prompt
+        encoded_prompt = requests.utils.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
+        
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content))
+            
+            # Save to a temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            img.save(temp_file.name)
+            
+            return temp_file.name
+        else:
+            return None
+    except Exception as e:
+        print(f"Image generation error: {e}")
+        return None
+
+# ============================================
+# WEB SEARCH FUNCTION (Tavily)
+# ============================================
 def web_search(query, max_results=5):
     """Search the web using Tavily API"""
     try:
@@ -49,16 +79,33 @@ def web_search(query, max_results=5):
     except Exception as e:
         return [{"body": f"Search error: {str(e)}"}]
 
-# Main agent function
+# ============================================
+# MAIN AGENT FUNCTION
+# ============================================
 def run_agent(query):
-    """Process user query and return response using Groq LLM with Tavily search"""
+    """Process user query - handles both image generation and web search"""
     try:
         # Check if it's an image generation request
-        image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of']
+        image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render', 'an image of']
         if any(keyword in query.lower() for keyword in image_keywords):
-            return "Image generation feature coming soon! For now, try asking a factual question."
+            # Extract the image prompt (remove the action words)
+            image_prompt = query
+            for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
+                image_prompt = image_prompt.lower().replace(keyword, '').strip()
+            
+            # If nothing left, use the original query
+            if not image_prompt or len(image_prompt) < 3:
+                image_prompt = query
+            
+            # Generate the image
+            image_path = generate_image(image_prompt)
+            
+            if image_path:
+                return f"IMAGE_RESULT:{image_path}|{image_prompt}"
+            else:
+                return "I couldn't generate that image right now. Please try a different description."
         
-        # Perform web search using Tavily
+        # If not an image request, perform web search
         search_results = web_search(query)
         
         # Build context from search results
@@ -90,7 +137,7 @@ ANSWER:"""
 
         # Get response from Groq
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama3-8b-8192",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5
         )
