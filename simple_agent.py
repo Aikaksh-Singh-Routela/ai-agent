@@ -30,10 +30,9 @@ def generate_image(prompt):
     try:
         print(f"🎨 Starting image generation for: '{prompt}'")
         
-        # AI Horde API base URL
         base_url = "https://aihorde.net/api/v2"
         
-        # Step 1: Submit generation request
+        # Submit payload
         submit_payload = {
             "prompt": prompt,
             "params": {
@@ -50,15 +49,13 @@ def generate_image(prompt):
         
         print("📤 Submitting request to AI Horde...")
         
+        # INCREASED TIMEOUT for submission
         submit_response = requests.post(
             f"{base_url}/generate/async",
             json=submit_payload,
             headers={"Content-Type": "application/json", "apikey": aihorde_api_key},
-            timeout=30
+            timeout=60  # Increased from 30 to 60 seconds
         )
-        
-        print(f"Response status: {submit_response.status_code}")
-        print(f"Response text: {submit_response.text}")
         
         if submit_response.status_code not in [200, 202]:
             print(f"❌ Submission failed: {submit_response.status_code}")
@@ -73,68 +70,85 @@ def generate_image(prompt):
             
         print(f"✅ Job submitted. ID: {job_id}")
         
-        # Step 2: Poll for completion
-        print("⏳ Waiting for generation...")
-        max_attempts = 30
+        # Poll for completion - INCREASED TIMEOUTS
+        print("⏳ Waiting for generation (this may take 1-3 minutes)...")
+        max_attempts = 90  # 3 minutes at 2-second intervals
         
         for attempt in range(max_attempts):
+            # Sleep first to avoid hammering the API
             time.sleep(2)
             
-            check_response = requests.get(
-                f"{base_url}/generate/check/{job_id}",
-                headers={"apikey": aihorde_api_key},
-                timeout=10
-            )
-            
-            if check_response.status_code == 200:
-                check_data = check_response.json()
-                print(f"Check data: {check_data}")
-                if check_data.get("finished") == 1 or check_data.get("done") == 1:
-                    print(f"🎉 Generation complete!")
-                    break
+            try:
+                check_response = requests.get(
+                    f"{base_url}/generate/check/{job_id}",
+                    headers={"apikey": aihorde_api_key},
+                    timeout=30  # Increased from 10 to 30 seconds
+                )
+                
+                if check_response.status_code == 200:
+                    check_data = check_response.json()
+                    queue_pos = check_data.get("queue_position", "unknown")
+                    wait_time = check_data.get("wait_time", "unknown")
+                    print(f"   Attempt {attempt + 1}/{max_attempts} - Queue: {queue_pos}, Wait: {wait_time}s")
                     
-            print(f"   Attempt {attempt + 1}/{max_attempts} - Processing...")
+                    if check_data.get("done") == True:
+                        print(f"🎉 Generation complete!")
+                        break
+                        
+                elif check_response.status_code == 404:
+                    print(f"   Job not ready yet (404)...")
+                    
+            except requests.exceptions.Timeout:
+                print(f"   ⏱️ Timeout on attempt {attempt + 1}, retrying...")
+                continue
+            except Exception as e:
+                print(f"   ⚠️ Check error: {e}, retrying...")
+                continue
             
             if attempt >= max_attempts - 1:
                 print("❌ Timeout waiting for generation")
+                print("   The AI Horde is very busy. Try again in a few minutes.")
                 return None
         
-        # Step 3: Retrieve the image
-        status_response = requests.get(
-            f"{base_url}/generate/status/{job_id}",
-            headers={"apikey": aihorde_api_key},
-            timeout=30
-        )
+        # Retrieve the image - INCREASED TIMEOUT
+        print("📥 Retrieving generated image...")
         
-        print(f"Status response: {status_response.status_code}")
+        try:
+            status_response = requests.get(
+                f"{base_url}/generate/status/{job_id}",
+                headers={"apikey": aihorde_api_key},
+                timeout=60  # Increased from 30 to 60 seconds
+            )
+        except requests.exceptions.Timeout:
+            print("❌ Timeout retrieving image")
+            return None
         
         if status_response.status_code != 200:
             print(f"❌ Status retrieval failed: {status_response.status_code}")
             return None
             
         status_data = status_response.json()
-        print(f"Status data keys: {status_data.keys() if status_data else 'None'}")
-        
         generations = status_data.get("generations", [])
-        print(f"Number of generations: {len(generations)}")
         
         if not generations:
             print("❌ No generations in response")
             return None
             
         generation = generations[0]
-        print(f"Generation keys: {generation.keys() if generation else 'None'}")
         
         # Get image data
         img_data = None
         if generation.get("img"):
-            print("📥 Found base64 image")
+            print("📥 Processing base64 image")
             img_data = base64.b64decode(generation.get("img"))
         elif generation.get("url"):
             print(f"📥 Downloading from URL")
-            img_response = requests.get(generation.get("url"), timeout=30)
-            if img_response.status_code == 200:
-                img_data = img_response.content
+            try:
+                img_response = requests.get(generation.get("url"), timeout=30)
+                if img_response.status_code == 200:
+                    img_data = img_response.content
+            except Exception as e:
+                print(f"   Download error: {e}")
         
         if not img_data:
             print("❌ Could not retrieve image data")
@@ -144,14 +158,7 @@ def generate_image(prompt):
         img = Image.open(BytesIO(img_data))
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
         img.save(temp_file.name)
-        print(f"✅ Image saved to: {temp_file.name}")
-        
-        # Clean up
-        try:
-            requests.delete(f"{base_url}/generate/status/{job_id}", headers={"apikey": aihorde_api_key})
-        except:
-            pass
-            
+        print(f"✅ Image saved!")
         return temp_file.name
         
     except Exception as e:
