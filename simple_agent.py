@@ -8,16 +8,9 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
-
-# ============================================
-# IMPORTANT: Set Fal.ai API key as environment variable
-# ============================================
-# The Fal client reads from FAL_KEY environment variable automatically[citation:1]
-# So we set it BEFORE importing fal_client
-os.environ["FAL_KEY"] = st.secrets["FAL_API_KEY"]
-
-# Now import fal_client (it will read FAL_KEY from environment)
-import fal_client
+import base64
+from horde_sdk import APIToken, AIHordeAPI
+from horde_sdk.generations import ImageGenerationInput, ImageGenerationParams
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
@@ -29,51 +22,72 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
+# Initialize AI Horde API (no API key needed - anonymous access)
+horde_api = AIHordeAPI(APIToken("0000000000"))  # Dummy key works for anonymous access
+
 # ============================================
-# IMAGE GENERATION FUNCTION (Fal.ai)
+# IMAGE GENERATION FUNCTION (AI Horde - Free)
 # ============================================
-def generate_image(prompt, max_retries=3):
-    """Generate an image using Fal.ai's Flux Schnell model"""
+def generate_image(prompt, max_retries=30):
+    """Generate an image using AI Horde (completely free, no API key needed)"""
     
-    for attempt in range(max_retries):
-        try:
-            print(f"Attempt {attempt + 1}: Generating image for: {prompt}")
+    try:
+        print(f"Generating image for: {prompt}")
+        
+        # Create the generation request
+        gen_input = ImageGenerationInput(
+            prompt=prompt,
+            params=ImageGenerationParams(
+                width=512,
+                height=512,
+                steps=25,
+                n=1
+            ),
+            nsfw=False,
+            censor_nsfw=True,
+            models=["Anything Diffusion"]
+        )
+        
+        # Submit the request
+        print("Submitting request to AI Horde...")
+        response = horde_api.image_generation_request(gen_input)
+        generation_id = response.id
+        print(f"Request submitted. Generation ID: {generation_id}")
+        
+        # Poll for completion
+        for attempt in range(max_retries):
+            time.sleep(2)  # Wait 2 seconds between checks
+            print(f"Checking status... (attempt {attempt + 1}/{max_retries})")
             
-            # Using the exact syntax from Fal.ai documentation[citation:6][citation:10]
-            result = fal_client.subscribe(
-                "fal-ai/flux/schnell",
-                arguments={
-                    "prompt": prompt,
-                    "image_size": "square_hd"
-                }
-            )
+            status = horde_api.image_generation_status(generation_id)
             
-            print(f"Result received: {result is not None}")
-            
-            # Extract the image URL from the result
-            if result and 'images' in result and len(result['images']) > 0:
-                image_url = result['images'][0]['url']
-                print(f"Downloading from: {image_url[:50]}...")
+            if status.done == 1:
+                print("Generation complete!")
+                generations = status.generations
                 
-                # Download the image
-                response = requests.get(image_url, timeout=30)
-                if response.status_code == 200:
-                    img = Image.open(BytesIO(response.content))
+                if generations and len(generations) > 0:
+                    # Decode the base64 image
+                    image_data = base64.b64decode(generations[0].img)
+                    img = Image.open(BytesIO(image_data))
+                    
+                    # Save to temporary file
                     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
                     img.save(temp_file.name)
-                    print(f"SUCCESS: Image saved to {temp_file.name}")
+                    print(f"Image saved to: {temp_file.name}")
                     return temp_file.name
                 else:
-                    print(f"Download failed: Status {response.status_code}")
-            else:
-                print(f"No image in response: {result.keys() if result else 'None'}")
-                
-        except Exception as e:
-            print(f"Attempt {attempt + 1} FAILED: {type(e).__name__}: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2)
-    
-    return None
+                    print("No generations returned")
+                    return None
+                    
+            elif attempt >= max_retries - 1:
+                print("Timeout waiting for generation")
+                return None
+        
+        return None
+        
+    except Exception as e:
+        print(f"AI Horde generation error: {e}")
+        return None
 
 # ============================================
 # WEB SEARCH FUNCTION (Tavily)
@@ -125,15 +139,15 @@ def run_agent(query):
             if not image_prompt or len(image_prompt) < 3:
                 image_prompt = query
             
-            print(f"Image prompt extracted: {image_prompt}")
+            print(f"Image prompt: {image_prompt}")
             
-            # Generate the image
+            # Generate the image using AI Horde
             image_path = generate_image(image_prompt)
             
             if image_path:
                 return f"IMAGE_RESULT:{image_path}|{image_prompt}"
             else:
-                return "I couldn't generate that image right now. Please check the logs for details."
+                return "I couldn't generate that image right now. The AI Horde might be busy. Please try again in a minute."
         
         # If not an image request, perform web search
         search_results = web_search(query)
