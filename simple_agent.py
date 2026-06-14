@@ -23,7 +23,7 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Replicate)
+# IMAGE GENERATION FUNCTION (Replicate Stable Diffusion)
 # ============================================
 def generate_image(prompt):
     """Generate an image using Replicate's Stable Diffusion"""
