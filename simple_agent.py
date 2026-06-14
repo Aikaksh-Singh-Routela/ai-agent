@@ -9,8 +9,7 @@ from PIL import Image
 from io import BytesIO
 import tempfile
 import base64
-from horde_sdk import APIToken, AIHordeAPI
-from horde_sdk.generations import ImageGenerationInput, ImageGenerationParams
+from horde_sdk import HordeAPI, APIKey
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
@@ -23,7 +22,7 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # Initialize AI Horde API (no API key needed - anonymous access)
-horde_api = AIHordeAPI(APIToken("0000000000"))  # Dummy key works for anonymous access
+horde_api = HordeAPI(api_key=APIKey("0000000000"))
 
 # ============================================
 # IMAGE GENERATION FUNCTION (AI Horde - Free)
@@ -35,23 +34,23 @@ def generate_image(prompt, max_retries=30):
         print(f"Generating image for: {prompt}")
         
         # Create the generation request
-        gen_input = ImageGenerationInput(
-            prompt=prompt,
-            params=ImageGenerationParams(
-                width=512,
-                height=512,
-                steps=25,
-                n=1
-            ),
-            nsfw=False,
-            censor_nsfw=True,
-            models=["Anything Diffusion"]
-        )
+        gen_input = {
+            "prompt": prompt,
+            "params": {
+                "width": 512,
+                "height": 512,
+                "steps": 25,
+                "n": 1
+            },
+            "nsfw": False,
+            "censor_nsfw": True,
+            "models": ["Anything Diffusion"]
+        }
         
         # Submit the request
         print("Submitting request to AI Horde...")
-        response = horde_api.image_generation_request(gen_input)
-        generation_id = response.id
+        response = horde_api.post_json_request("/api/v4/generate/async", gen_input)
+        generation_id = response.get("id")
         print(f"Request submitted. Generation ID: {generation_id}")
         
         # Poll for completion
@@ -59,15 +58,15 @@ def generate_image(prompt, max_retries=30):
             time.sleep(2)  # Wait 2 seconds between checks
             print(f"Checking status... (attempt {attempt + 1}/{max_retries})")
             
-            status = horde_api.image_generation_status(generation_id)
+            status = horde_api.get_json_request(f"/api/v4/generate/status/{generation_id}")
             
-            if status.done == 1:
+            if status.get("done") == 1:
                 print("Generation complete!")
-                generations = status.generations
+                generations = status.get("generations", [])
                 
                 if generations and len(generations) > 0:
                     # Decode the base64 image
-                    image_data = base64.b64decode(generations[0].img)
+                    image_data = base64.b64decode(generations[0].get("img"))
                     img = Image.open(BytesIO(image_data))
                     
                     # Save to temporary file
