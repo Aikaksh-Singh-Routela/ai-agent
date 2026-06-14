@@ -8,10 +8,12 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
+import base64
 
-# Correct imports from horde-sdk documentation
-from horde_sdk import AIHordeAPISimpleClient
-from horde_sdk.generations import ImageGenerationInput, ImageGenerationParams
+# --- CORRECTED IMPORTS FOR HORDE-SDK ---
+from horde_sdk.ai_horde_api.ai_horde_clients import AIHordeAPISimpleClient
+from horde_sdk.ai_horde_api.apimodels import ImageGenerateAsyncRequest
+# ---------------------------------------
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
@@ -23,62 +25,51 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
-# Initialize AI Horde client (no API key needed - uses anonymous access)
+# Initialize AI Horde client (anonymous access - no API key needed)
 horde_client = AIHordeAPISimpleClient()
 
 # ============================================
-# IMAGE GENERATION FUNCTION (AI Horde - Free)
+# IMAGE GENERATION FUNCTION (AI Horde)
 # ============================================
-def generate_image(prompt, max_retries=30):
+def generate_image(prompt):
     """Generate an image using AI Horde (completely free, no API key needed)"""
-    
     try:
         print(f"Generating image for: {prompt}")
         
-        # Create the generation request using the correct SDK types
-        generation_input = ImageGenerationInput(
+        # Create the generation request using the documented object
+        generation_request = ImageGenerateAsyncRequest(
             prompt=prompt,
-            params=ImageGenerationParams(
-                width=512,
-                height=512,
-                steps=25,
-                n=1
-            ),
+            params={
+                "width": 512,
+                "height": 512,
+                "steps": 25,
+                "n": 1
+            },
             nsfw=False,
             censor_nsfw=True
         )
         
-        # Submit the request using the simple client (handles polling automatically)
+        # Submit the request (the client handles the async polling automatically)
         print("Submitting request to AI Horde...")
+        response = horde_client.generate(generation_request)
         
-        # The simple client's generate method handles the entire process
-        # It submits and waits for completion automatically
-        generations = horde_client.generate(generation_input)
-        
-        if generations and len(generations) > 0:
-            # The image comes as base64 string
-            image_data = generations[0].img  # This is already bytes or base64
-            import base64
-            
-            # If it's a string, it's base64; if it's bytes, use directly
-            if isinstance(image_data, str):
-                img_bytes = base64.b64decode(image_data)
-            else:
-                img_bytes = image_data
-                
-            img = Image.open(BytesIO(img_bytes))
+        # Process the response
+        if response and response.generations and len(response.generations) > 0:
+            # Decode the base64 image
+            image_data = base64.b64decode(response.generations[0].img)
+            img = Image.open(BytesIO(image_data))
             
             # Save to temporary file
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
             img.save(temp_file.name)
-            print(f"Image saved to: {temp_file.name}")
+            print(f"✅ Image generated and saved!")
             return temp_file.name
         else:
-            print("No generations returned")
+            print("No generations returned by the AI Horde.")
             return None
-        
+            
     except Exception as e:
-        print(f"AI Horde generation error: {e}")
+        print(f"❌ AI Horde generation error: {e}")
         return None
 
 # ============================================
