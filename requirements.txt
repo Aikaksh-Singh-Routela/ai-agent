@@ -3,4 +3,3 @@ streamlit
 requests
 tavily-python
 Pillow
-horde-sdk
