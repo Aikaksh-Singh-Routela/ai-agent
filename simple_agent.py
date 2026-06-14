@@ -23,10 +23,10 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Replicate - Stable Diffusion)
+# IMAGE GENERATION FUNCTION (Replicate)
 # ============================================
 def generate_image(prompt):
-    """Generate an image using Stable Diffusion on Replicate"""
+    """Generate an image using Replicate's Stable Diffusion"""
     try:
         print(f"🎨 Generating image for: '{prompt}'")
         
@@ -35,30 +35,31 @@ def generate_image(prompt):
         
         # Use Stable Diffusion model
         output = replicate_client.run(
-            "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
+            "stability-ai/stable-diffusion-3.5-large-turbo",
             input={
                 "prompt": prompt,
                 "width": 512,
                 "height": 512,
-                "num_outputs": 1,
-                "num_inference_steps": 25,
-                "guidance_scale": 7.5
+                "num_outputs": 1
             }
         )
         
-        # Download the image
         if output and len(output) > 0:
-            response = requests.get(output[0])
+            image_url = output[0]
+            if hasattr(image_url, 'url'):
+                image_url = image_url.url
+            
+            response = requests.get(image_url, timeout=30)
             if response.status_code == 200:
                 img = Image.open(BytesIO(response.content))
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
                 img.save(temp_file.name)
-                print(f"✅ Image generated successfully!")
+                print(f"✅ Image generated via Replicate!")
                 return temp_file.name
-        return None
         
+        return None
     except Exception as e:
-        print(f"🚨 Error: {e}")
+        print(f"Replicate error: {e}")
         return None
 
 # ============================================
