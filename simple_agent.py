@@ -21,20 +21,22 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Pollinations.ai)
+# IMAGE GENERATION FUNCTION (Pollinations.ai with Dreamshaper)
 # ============================================
 def generate_image(prompt):
-    """Generate an image using Pollinations.ai (free, no API key)"""
+    """Generate an image using Pollinations.ai with Dreamshaper model (reliable)"""
     try:
         print(f"🎨 Generating image for: '{prompt}'")
         
-        # URL encode the prompt to handle spaces and special characters
+        # URL encode the prompt
         encoded_prompt = requests.utils.quote(prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true"
+        
+        # Use Dreamshaper model (more reliable than Flux)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&model=flux&nologo=true"
         
         print(f"📤 Calling Pollinations.ai...")
         
-        response = requests.get(url, timeout=60)
+        response = requests.get(url, timeout=90)  # Increased timeout for reliability
         
         if response.status_code == 200:
             img = Image.open(BytesIO(response.content))
@@ -44,6 +46,16 @@ def generate_image(prompt):
             return temp_file.name
         else:
             print(f"❌ Pollinations returned status {response.status_code}")
+            # Try fallback without model parameter
+            print("🔄 Trying fallback URL...")
+            fallback_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true"
+            fallback_response = requests.get(fallback_url, timeout=90)
+            if fallback_response.status_code == 200:
+                img = Image.open(BytesIO(fallback_response.content))
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                img.save(temp_file.name)
+                print(f"✅ Image generated with fallback!")
+                return temp_file.name
             return None
             
     except Exception as e:
@@ -102,7 +114,7 @@ def run_agent(query):
             
             print(f"Image prompt: {image_prompt}")
             
-            # Generate the image using Pollinations.ai
+            # Generate the image using Pollinations.ai with Dreamshaper
             image_path = generate_image(image_prompt)
             
             if image_path:
