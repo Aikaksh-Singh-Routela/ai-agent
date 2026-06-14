@@ -9,11 +9,11 @@ from PIL import Image
 from io import BytesIO
 import tempfile
 import base64
-from datetime import datetime
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
+aihorde_api_key = st.secrets["AIHORDE_API_KEY"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -22,9 +22,8 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (AI Horde - Direct API)
+# IMAGE GENERATION FUNCTION (AI Horde)
 # ============================================
-# We're using direct HTTP requests to avoid async complexity
 def generate_image(prompt):
     """Generate an image using AI Horde via direct API calls"""
     
@@ -46,18 +45,22 @@ def generate_image(prompt):
             },
             "nsfw": False,
             "censor_nsfw": True,
-            "models": ["Stable Diffusion 1.5"]
+            "models": ["Deliberate"]
         }
         
         print("📤 Submitting request to AI Horde...")
+        
         submit_response = requests.post(
             f"{base_url}/generate/async",
             json=submit_payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "apikey": aihorde_api_key},
             timeout=30
         )
         
-        if submit_response.status_code != 202 and submit_response.status_code != 200:
+        print(f"Response status: {submit_response.status_code}")
+        print(f"Response text: {submit_response.text}")
+        
+        if submit_response.status_code not in [200, 202]:
             print(f"❌ Submission failed: {submit_response.status_code}")
             return None
             
@@ -70,20 +73,22 @@ def generate_image(prompt):
             
         print(f"✅ Job submitted. ID: {job_id}")
         
-        # Step 2: Poll for completion using check endpoint
+        # Step 2: Poll for completion
         print("⏳ Waiting for generation...")
         max_attempts = 30
         
         for attempt in range(max_attempts):
-            time.sleep(2)  # Wait 2 seconds between checks
+            time.sleep(2)
             
             check_response = requests.get(
                 f"{base_url}/generate/check/{job_id}",
+                headers={"apikey": aihorde_api_key},
                 timeout=10
             )
             
             if check_response.status_code == 200:
                 check_data = check_response.json()
+                print(f"Check data: {check_data}")
                 if check_data.get("finished") == 1 or check_data.get("done") == 1:
                     print(f"🎉 Generation complete!")
                     break
@@ -94,38 +99,43 @@ def generate_image(prompt):
                 print("❌ Timeout waiting for generation")
                 return None
         
-        # Step 3: Retrieve the image using status endpoint
+        # Step 3: Retrieve the image
         status_response = requests.get(
             f"{base_url}/generate/status/{job_id}",
+            headers={"apikey": aihorde_api_key},
             timeout=30
         )
+        
+        print(f"Status response: {status_response.status_code}")
         
         if status_response.status_code != 200:
             print(f"❌ Status retrieval failed: {status_response.status_code}")
             return None
             
         status_data = status_response.json()
-        generations = status_data.get("generations", [])
+        print(f"Status data keys: {status_data.keys() if status_data else 'None'}")
         
-        if not generations or len(generations) == 0:
-            print("❌ No generations found in response")
+        generations = status_data.get("generations", [])
+        print(f"Number of generations: {len(generations)}")
+        
+        if not generations:
+            print("❌ No generations in response")
             return None
             
-        # Get image data (could be base64 string or URL)
-        img_data = None
         generation = generations[0]
+        print(f"Generation keys: {generation.keys() if generation else 'None'}")
         
+        # Get image data
+        img_data = None
         if generation.get("img"):
-            # It's base64 encoded
-            print("📥 Decoding base64 image...")
+            print("📥 Found base64 image")
             img_data = base64.b64decode(generation.get("img"))
         elif generation.get("url"):
-            # It's a URL to download
-            print(f"📥 Downloading image from URL...")
+            print(f"📥 Downloading from URL")
             img_response = requests.get(generation.get("url"), timeout=30)
             if img_response.status_code == 200:
                 img_data = img_response.content
-                
+        
         if not img_data:
             print("❌ Could not retrieve image data")
             return None
@@ -134,11 +144,11 @@ def generate_image(prompt):
         img = Image.open(BytesIO(img_data))
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
         img.save(temp_file.name)
-        print(f"✅ Image successfully generated and saved!")
+        print(f"✅ Image saved to: {temp_file.name}")
         
-        # Clean up: Delete the job from the server
+        # Clean up
         try:
-            requests.delete(f"{base_url}/generate/status/{job_id}", timeout=10)
+            requests.delete(f"{base_url}/generate/status/{job_id}", headers={"apikey": aihorde_api_key})
         except:
             pass
             
@@ -146,6 +156,8 @@ def generate_image(prompt):
         
     except Exception as e:
         print(f"🚨 Error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ============================================
@@ -200,7 +212,7 @@ def run_agent(query):
             
             print(f"Image prompt: {image_prompt}")
             
-            # Generate the image using AI Horde via direct API
+            # Generate the image using AI Horde
             image_path = generate_image(image_prompt)
             
             if image_path:
