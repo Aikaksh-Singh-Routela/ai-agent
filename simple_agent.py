@@ -9,10 +9,12 @@ from PIL import Image
 from io import BytesIO
 import tempfile
 import base64
+import replicate
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
+replicate_api_token = st.secrets["REPLICATE_API_TOKEN"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -21,43 +23,40 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Pollinations.ai with Dreamshaper)
+# IMAGE GENERATION FUNCTION (Replicate - Stable Diffusion)
 # ============================================
 def generate_image(prompt):
-    """Generate an image using Pollinations.ai with Dreamshaper model (reliable)"""
+    """Generate an image using Stable Diffusion on Replicate"""
     try:
         print(f"🎨 Generating image for: '{prompt}'")
         
-        # URL encode the prompt
-        encoded_prompt = requests.utils.quote(prompt)
+        # Initialize Replicate client
+        replicate_client = replicate.Client(api_token=replicate_api_token)
         
-        # Use Dreamshaper model (more reliable than Flux)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&model=flux&nologo=true"
+        # Use Stable Diffusion model
+        output = replicate_client.run(
+            "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
+            input={
+                "prompt": prompt,
+                "width": 512,
+                "height": 512,
+                "num_outputs": 1,
+                "num_inference_steps": 25,
+                "guidance_scale": 7.5
+            }
+        )
         
-        print(f"📤 Calling Pollinations.ai...")
-        
-        response = requests.get(url, timeout=90)  # Increased timeout for reliability
-        
-        if response.status_code == 200:
-            img = Image.open(BytesIO(response.content))
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-            img.save(temp_file.name)
-            print(f"✅ Image generated successfully!")
-            return temp_file.name
-        else:
-            print(f"❌ Pollinations returned status {response.status_code}")
-            # Try fallback without model parameter
-            print("🔄 Trying fallback URL...")
-            fallback_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true"
-            fallback_response = requests.get(fallback_url, timeout=90)
-            if fallback_response.status_code == 200:
-                img = Image.open(BytesIO(fallback_response.content))
+        # Download the image
+        if output and len(output) > 0:
+            response = requests.get(output[0])
+            if response.status_code == 200:
+                img = Image.open(BytesIO(response.content))
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
                 img.save(temp_file.name)
-                print(f"✅ Image generated with fallback!")
+                print(f"✅ Image generated successfully!")
                 return temp_file.name
-            return None
-            
+        return None
+        
     except Exception as e:
         print(f"🚨 Error: {e}")
         return None
@@ -104,7 +103,7 @@ def run_agent(query):
         # Check if it's an image generation request
         image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render']
         if any(keyword in query.lower() for keyword in image_keywords):
-            # Extract the image prompt (remove the action words)
+            # Extract the image prompt
             image_prompt = query
             for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
                 image_prompt = image_prompt.lower().replace(keyword, '').strip()
@@ -114,7 +113,7 @@ def run_agent(query):
             
             print(f"Image prompt: {image_prompt}")
             
-            # Generate the image using Pollinations.ai with Dreamshaper
+            # Generate the image using Replicate
             image_path = generate_image(image_prompt)
             
             if image_path:
