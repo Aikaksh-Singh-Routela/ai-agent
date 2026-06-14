@@ -3,18 +3,13 @@ import os
 import requests
 import json
 import time
+import re
 from groq import Groq
 from tavily import TavilyClient
-from PIL import Image
-from io import BytesIO
-import tempfile
-import base64
-import replicate
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
-replicate_api_token = st.secrets["REPLICATE_API_TOKEN"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -23,43 +18,64 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Replicate Stable Diffusion)
+# MATH PROBLEM SOLVING FUNCTION
 # ============================================
-def generate_image(prompt):
-    """Generate an image using Replicate's Stable Diffusion"""
+def solve_math(expression):
+    """Safely solve math problems"""
     try:
-        print(f"🎨 Generating image for: '{prompt}'")
+        # Clean the expression
+        cleaned = expression.lower()
         
-        # Initialize Replicate client
-        replicate_client = replicate.Client(api_token=replicate_api_token)
+        # Common math phrases to handle
+        cleaned = cleaned.replace('what is', '')
+        cleaned = cleaned.replace('calculate', '')
+        cleaned = cleaned.replace('solve', '')
+        cleaned = cleaned.replace('plus', '+')
+        cleaned = cleaned.replace('minus', '-')
+        cleaned = cleaned.replace('times', '*')
+        cleaned = cleaned.replace('multiplied by', '*')
+        cleaned = cleaned.replace('divided by', '/')
+        cleaned = cleaned.replace('percent of', '* 0.01 *')
         
-        # Use Stable Diffusion model
-        output = replicate_client.run(
-            "stability-ai/stable-diffusion-3.5-large-turbo",
-            input={
-                "prompt": prompt,
-                "width": 512,
-                "height": 512,
-                "num_outputs": 1
-            }
-        )
+        # Handle square root
+        if 'square root of' in cleaned:
+            import math
+            number = re.search(r'square root of (\d+)', cleaned)
+            if number:
+                result = math.sqrt(float(number.group(1)))
+                return f"🧮 √{number.group(1)} = {result}"
         
-        if output and len(output) > 0:
-            image_url = output[0]
-            if hasattr(image_url, 'url'):
-                image_url = image_url.url
+        # Handle percentage calculations
+        if '%' in cleaned or 'percent' in cleaned:
+            # Example: "15% of 200"
+            percent_pattern = r'(\d+(?:\.\d+)?)\s*%?\s*(?:of|percent of)?\s*(\d+(?:\.\d+)?)'
+            match = re.search(percent_pattern, cleaned)
+            if match:
+                percent = float(match.group(1))
+                number = float(match.group(2))
+                result = (percent / 100) * number
+                return f"🧮 {percent}% of {number} = {result}"
+        
+        # Extract numbers and operators for basic math
+        pattern = r'[0-9\.\+\-\*\/\(\)\s]+'
+        match = re.search(pattern, cleaned)
+        
+        if match:
+            math_expr = match.group().strip()
+            # Safely evaluate the expression
+            result = eval(math_expr)
+            # Format result nicely
+            if isinstance(result, float):
+                if result.is_integer():
+                    result = int(result)
+                else:
+                    result = round(result, 4)
+            return f"🧮 {math_expr} = {result}"
+        else:
+            return None
             
-            response = requests.get(image_url, timeout=30)
-            if response.status_code == 200:
-                img = Image.open(BytesIO(response.content))
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                img.save(temp_file.name)
-                print(f"✅ Image generated via Replicate!")
-                return temp_file.name
-        
-        return None
     except Exception as e:
-        print(f"Replicate error: {e}")
+        print(f"Math error: {e}")
         return None
 
 # ============================================
@@ -99,30 +115,22 @@ def web_search(query, max_results=5):
 # MAIN AGENT FUNCTION
 # ============================================
 def run_agent(query):
-    """Process user query - handles both image generation and web search"""
+    """Process user query - handles math problems and web search"""
     try:
-        # Check if it's an image generation request
-        image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render']
-        if any(keyword in query.lower() for keyword in image_keywords):
-            # Extract the image prompt
-            image_prompt = query
-            for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
-                image_prompt = image_prompt.lower().replace(keyword, '').strip()
-            
-            if not image_prompt or len(image_prompt) < 3:
-                image_prompt = query
-            
-            print(f"Image prompt: {image_prompt}")
-            
-            # Generate the image using Replicate
-            image_path = generate_image(image_prompt)
-            
-            if image_path:
-                return f"IMAGE_RESULT:{image_path}|{image_prompt}"
-            else:
-                return "I couldn't generate that image right now. Please try a different description."
+        print(f"Processing query: {query}")
         
-        # If not an image request, perform web search
+        # Check if it's a math problem first
+        math_indicators = ['calculate', 'solve', 'what is', 'plus', 'minus', 'times', 
+                          'divided by', '%', 'percent', 'square root', '+', '-', '*', '/']
+        
+        if any(indicator in query.lower() for indicator in math_indicators):
+            # Try to solve as math
+            math_result = solve_math(query)
+            if math_result:
+                return math_result
+        
+        # If not math or math failed, perform web search
+        print("Performing web search...")
         search_results = web_search(query)
         
         # Build context from search results
@@ -130,11 +138,11 @@ def run_agent(query):
         for i, result in enumerate(search_results[:5]):
             if result.get('body'):
                 if result.get('title') != "AI Summary":
-                    context_parts.append(f"Source {i+1} ({result.get('title', 'Unknown')}): {result['body'][:500]}")
+                    context_parts.append(f"Source {i+1} ({result.get('title', 'Unknown')}): {result['body'][:800]}")
                 else:
-                    context_parts.append(f"AI Summary: {result['body'][:500]}")
+                    context_parts.append(f"AI Summary: {result['body'][:800]}")
         
-        context = "\n\n".join(context_parts) if context_parts else "No relevant information found."
+        context = "\n\n---\n\n".join(context_parts) if context_parts else "No relevant information found."
         
         # Create prompt for Groq
         prompt = f"""You are a helpful AI assistant. Answer the user's question based on the information below.
@@ -146,9 +154,10 @@ USER QUESTION: {query}
 
 INSTRUCTIONS:
 - Use ONLY the search results above to answer
-- If the answer is in the search results, provide it directly
+- If the answer is in the search results, provide it directly with citations
 - If the search results don't contain the answer, say "Based on the information I found, I cannot answer this question confidently."
-- Be specific and cite your sources when possible
+- Be specific, factual, and cite which source you're using
+- Keep your answer concise but informative
 
 ANSWER:"""
 
@@ -156,7 +165,7 @@ ANSWER:"""
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.5
+            temperature=0.3
         )
         
         return response.choices[0].message.content
