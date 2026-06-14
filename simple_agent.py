@@ -32,7 +32,7 @@ def generate_image(prompt):
         
         base_url = "https://aihorde.net/api/v2"
         
-        # Submit payload
+        # The correct payload format according to AI Horde API docs
         submit_payload = {
             "prompt": prompt,
             "params": {
@@ -44,21 +44,24 @@ def generate_image(prompt):
             },
             "nsfw": False,
             "censor_nsfw": True,
-            "models": ["Deliberate"]
+            "models": ["Deliberate"]  # This MUST be included and spelled correctly
         }
         
         print("📤 Submitting request to AI Horde...")
+        print(f"Payload: {submit_payload}")
         
-        # INCREASED TIMEOUT for submission
         submit_response = requests.post(
             f"{base_url}/generate/async",
             json=submit_payload,
             headers={"Content-Type": "application/json", "apikey": aihorde_api_key},
-            timeout=60  # Increased from 30 to 60 seconds
+            timeout=60
         )
+        
+        print(f"Response status: {submit_response.status_code}")
         
         if submit_response.status_code not in [200, 202]:
             print(f"❌ Submission failed: {submit_response.status_code}")
+            print(f"Response: {submit_response.text}")
             return None
             
         result = submit_response.json()
@@ -70,57 +73,77 @@ def generate_image(prompt):
             
         print(f"✅ Job submitted. ID: {job_id}")
         
-        # Poll for completion - INCREASED TIMEOUTS
-        print("⏳ Waiting for generation (this may take 1-3 minutes)...")
-        max_attempts = 90  # 3 minutes at 2-second intervals
+        # Check if request is possible
+        print("🔍 Checking request status...")
+        
+        try:
+            check_response = requests.get(
+                f"{base_url}/generate/check/{job_id}",
+                headers={"apikey": aihorde_api_key},
+                timeout=30
+            )
+            
+            if check_response.status_code == 200:
+                check_data = check_response.json()
+                print(f"Check response: {check_data}")
+                
+                if check_data.get("is_possible") == False:
+                    print(f"❌ Request cannot be completed.")
+                    print(f"   Queue position: {check_data.get('queue_position', 'N/A')}")
+                    return None
+                else:
+                    queue_pos = check_data.get("queue_position", "unknown")
+                    wait_time = check_data.get("wait_time", "unknown")
+                    print(f"✅ Request is possible. Queue position: {queue_pos}")
+                    
+        except Exception as e:
+            print(f"⚠️ Could not check status: {e}")
+        
+        # Poll for completion
+        print("⏳ Waiting for generation...")
+        max_attempts = 60
         
         for attempt in range(max_attempts):
-            # Sleep first to avoid hammering the API
             time.sleep(2)
             
             try:
-                check_response = requests.get(
+                poll_response = requests.get(
                     f"{base_url}/generate/check/{job_id}",
                     headers={"apikey": aihorde_api_key},
-                    timeout=30  # Increased from 10 to 30 seconds
+                    timeout=30
                 )
                 
-                if check_response.status_code == 200:
-                    check_data = check_response.json()
-                    queue_pos = check_data.get("queue_position", "unknown")
-                    wait_time = check_data.get("wait_time", "unknown")
-                    print(f"   Attempt {attempt + 1}/{max_attempts} - Queue: {queue_pos}, Wait: {wait_time}s")
+                if poll_response.status_code == 200:
+                    poll_data = poll_response.json()
+                    finished = poll_data.get("finished", 0)
+                    processing = poll_data.get("processing", 0)
+                    waiting = poll_data.get("waiting", 0)
                     
-                    if check_data.get("done") == True:
+                    print(f"   Attempt {attempt + 1}: {finished} finished, {processing} processing, {waiting} waiting")
+                    
+                    if poll_data.get("done") == True:
                         print(f"🎉 Generation complete!")
                         break
                         
-                elif check_response.status_code == 404:
-                    print(f"   Job not ready yet (404)...")
-                    
-            except requests.exceptions.Timeout:
-                print(f"   ⏱️ Timeout on attempt {attempt + 1}, retrying...")
-                continue
             except Exception as e:
-                print(f"   ⚠️ Check error: {e}, retrying...")
+                print(f"   Polling error: {e}")
                 continue
             
             if attempt >= max_attempts - 1:
                 print("❌ Timeout waiting for generation")
-                print("   The AI Horde is very busy. Try again in a few minutes.")
                 return None
         
-        # Retrieve the image - INCREASED TIMEOUT
+        # Retrieve the image
         print("📥 Retrieving generated image...")
         
         try:
             status_response = requests.get(
                 f"{base_url}/generate/status/{job_id}",
                 headers={"apikey": aihorde_api_key},
-                timeout=60  # Increased from 30 to 60 seconds
+                timeout=60
             )
-        except requests.exceptions.Timeout:
-            print("❌ Timeout retrieving image")
+        except Exception as e:
+            print(f"❌ Status retrieval error: {e}")
             return None
         
         if status_response.status_code != 200:
