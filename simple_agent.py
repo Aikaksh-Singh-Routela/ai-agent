@@ -8,12 +8,12 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
-import replicate
+import fal_client
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
-replicate_api_token = st.secrets["REPLICATE_API_TOKEN"]
+fal_api_key = st.secrets["FAL_API_KEY"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -21,41 +21,37 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
+# Set Fal.ai API key
+fal_client.api_key = fal_api_key
+
 # ============================================
-# IMAGE GENERATION FUNCTION (Replicate FLUX)
+# IMAGE GENERATION FUNCTION (Fal.ai - Free & Fast)
 # ============================================
 def generate_image(prompt, width=1024, height=768):
-    """Generate an image using Replicate's FLUX Schnell model"""
+    """Generate an image using Fal.ai's Flux model (completely free)"""
     try:
-        # Using FLUX Schnell - fast and cheap (~$0.003 per image)
-        output = replicate.run(
-            "black-forest-labs/flux-schnell",
-            input={
+        result = fal_client.subscribe(
+            "fal-ai/flux-schnell",
+            arguments={
                 "prompt": prompt,
-                "width": width,
-                "height": height,
-                "num_outputs": 1,
-                "output_format": "png"
+                "image_size": f"{width}x{height}"
             }
         )
         
-        # The output is a list of FileOutput objects
-        if output and len(output) > 0:
-            # Read the image data directly from the FileOutput object
-            image_data = output[0].read()
-            
-            # Load the image from the byte data
-            img = Image.open(BytesIO(image_data))
-            
-            # Save to a temporary file
+        # Get the image URL from the result
+        image_url = result['images'][0]['url']
+        
+        # Download the image
+        response = requests.get(image_url)
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content))
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
             img.save(temp_file.name)
             return temp_file.name
         
         return None
-        
     except Exception as e:
-        print(f"Replicate image generation error: {e}")
+        print(f"Fal.ai image generation error: {e}")
         return None
 
 # ============================================
@@ -111,13 +107,13 @@ def run_agent(query):
             if not image_prompt or len(image_prompt) < 3:
                 image_prompt = query
             
-            # Generate the image using Replicate
+            # Generate the image using Fal.ai
             image_path = generate_image(image_prompt)
             
             if image_path:
                 return f"IMAGE_RESULT:{image_path}|{image_prompt}"
             else:
-                return "I couldn't generate that image right now. Please try a different description or check your Replicate credits."
+                return "I couldn't generate that image right now. Please try a different description."
         
         # If not an image request, perform web search
         search_results = web_search(query)
