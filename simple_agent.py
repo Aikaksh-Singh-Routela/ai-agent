@@ -13,7 +13,6 @@ import base64
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
-aihorde_api_key = st.secrets["AIHORDE_API_KEY"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -22,172 +21,33 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (AI Horde)
+# IMAGE GENERATION FUNCTION (Pollinations.ai)
 # ============================================
 def generate_image(prompt):
-    """Generate an image using AI Horde via direct API calls"""
-    
+    """Generate an image using Pollinations.ai (free, no API key)"""
     try:
-        print(f"🎨 Starting image generation for: '{prompt}'")
+        print(f"🎨 Generating image for: '{prompt}'")
         
-        base_url = "https://aihorde.net/api/v2"
+        # URL encode the prompt to handle spaces and special characters
+        encoded_prompt = requests.utils.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true"
         
-        # The correct payload format according to AI Horde API docs
-        submit_payload = {
-            "prompt": prompt,
-            "params": {
-                "width": 512,
-                "height": 512,
-                "steps": 25,
-                "n": 1,
-                "sampler_name": "k_euler_a"
-            },
-            "nsfw": False,
-            "censor_nsfw": True,
-            "models": ["Deliberate"]  # This MUST be included and spelled correctly
-        }
+        print(f"📤 Calling Pollinations.ai...")
         
-        print("📤 Submitting request to AI Horde...")
-        print(f"Payload: {submit_payload}")
+        response = requests.get(url, timeout=60)
         
-        submit_response = requests.post(
-            f"{base_url}/generate/async",
-            json=submit_payload,
-            headers={"Content-Type": "application/json", "apikey": aihorde_api_key},
-            timeout=60
-        )
-        
-        print(f"Response status: {submit_response.status_code}")
-        
-        if submit_response.status_code not in [200, 202]:
-            print(f"❌ Submission failed: {submit_response.status_code}")
-            print(f"Response: {submit_response.text}")
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content))
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            img.save(temp_file.name)
+            print(f"✅ Image generated successfully!")
+            return temp_file.name
+        else:
+            print(f"❌ Pollinations returned status {response.status_code}")
             return None
             
-        result = submit_response.json()
-        job_id = result.get("id")
-        
-        if not job_id:
-            print("❌ No job ID received")
-            return None
-            
-        print(f"✅ Job submitted. ID: {job_id}")
-        
-        # Check if request is possible
-        print("🔍 Checking request status...")
-        
-        try:
-            check_response = requests.get(
-                f"{base_url}/generate/check/{job_id}",
-                headers={"apikey": aihorde_api_key},
-                timeout=30
-            )
-            
-            if check_response.status_code == 200:
-                check_data = check_response.json()
-                print(f"Check response: {check_data}")
-                
-                if check_data.get("is_possible") == False:
-                    print(f"❌ Request cannot be completed.")
-                    print(f"   Queue position: {check_data.get('queue_position', 'N/A')}")
-                    return None
-                else:
-                    queue_pos = check_data.get("queue_position", "unknown")
-                    wait_time = check_data.get("wait_time", "unknown")
-                    print(f"✅ Request is possible. Queue position: {queue_pos}")
-                    
-        except Exception as e:
-            print(f"⚠️ Could not check status: {e}")
-        
-        # Poll for completion
-        print("⏳ Waiting for generation...")
-        max_attempts = 60
-        
-        for attempt in range(max_attempts):
-            time.sleep(2)
-            
-            try:
-                poll_response = requests.get(
-                    f"{base_url}/generate/check/{job_id}",
-                    headers={"apikey": aihorde_api_key},
-                    timeout=30
-                )
-                
-                if poll_response.status_code == 200:
-                    poll_data = poll_response.json()
-                    finished = poll_data.get("finished", 0)
-                    processing = poll_data.get("processing", 0)
-                    waiting = poll_data.get("waiting", 0)
-                    
-                    print(f"   Attempt {attempt + 1}: {finished} finished, {processing} processing, {waiting} waiting")
-                    
-                    if poll_data.get("done") == True:
-                        print(f"🎉 Generation complete!")
-                        break
-                        
-            except Exception as e:
-                print(f"   Polling error: {e}")
-                continue
-            
-            if attempt >= max_attempts - 1:
-                print("❌ Timeout waiting for generation")
-                return None
-        
-        # Retrieve the image
-        print("📥 Retrieving generated image...")
-        
-        try:
-            status_response = requests.get(
-                f"{base_url}/generate/status/{job_id}",
-                headers={"apikey": aihorde_api_key},
-                timeout=60
-            )
-        except Exception as e:
-            print(f"❌ Status retrieval error: {e}")
-            return None
-        
-        if status_response.status_code != 200:
-            print(f"❌ Status retrieval failed: {status_response.status_code}")
-            return None
-            
-        status_data = status_response.json()
-        generations = status_data.get("generations", [])
-        
-        if not generations:
-            print("❌ No generations in response")
-            return None
-            
-        generation = generations[0]
-        
-        # Get image data
-        img_data = None
-        if generation.get("img"):
-            print("📥 Processing base64 image")
-            img_data = base64.b64decode(generation.get("img"))
-        elif generation.get("url"):
-            print(f"📥 Downloading from URL")
-            try:
-                img_response = requests.get(generation.get("url"), timeout=30)
-                if img_response.status_code == 200:
-                    img_data = img_response.content
-            except Exception as e:
-                print(f"   Download error: {e}")
-        
-        if not img_data:
-            print("❌ Could not retrieve image data")
-            return None
-            
-        # Save the image
-        img = Image.open(BytesIO(img_data))
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-        img.save(temp_file.name)
-        print(f"✅ Image saved!")
-        return temp_file.name
-        
     except Exception as e:
         print(f"🚨 Error: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 # ============================================
@@ -232,7 +92,7 @@ def run_agent(query):
         # Check if it's an image generation request
         image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render']
         if any(keyword in query.lower() for keyword in image_keywords):
-            # Extract the image prompt
+            # Extract the image prompt (remove the action words)
             image_prompt = query
             for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
                 image_prompt = image_prompt.lower().replace(keyword, '').strip()
@@ -242,13 +102,13 @@ def run_agent(query):
             
             print(f"Image prompt: {image_prompt}")
             
-            # Generate the image using AI Horde
+            # Generate the image using Pollinations.ai
             image_path = generate_image(image_prompt)
             
             if image_path:
                 return f"IMAGE_RESULT:{image_path}|{image_prompt}"
             else:
-                return "I couldn't generate that image right now. The AI Horde might be busy. Please try again in a minute."
+                return "I couldn't generate that image right now. Please try a different description."
         
         # If not an image request, perform web search
         search_results = web_search(query)
