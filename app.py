@@ -1,19 +1,33 @@
-# When you get a response from run_agent()
-response = run_agent(user_query)
+import streamlit as st
+from simple_agent import run_agent
 
-# Check if response contains an image
-if response.startswith("IMAGE_RESULT:"):
-    parts = response.replace("IMAGE_RESULT:", "").split("|")
-    image_path = parts[0]
-    prompt_used = parts[1] if len(parts) > 1 else ""
+# Page config
+st.set_page_config(page_title="AI Agent with Tools", page_icon="🤖", layout="wide")
+
+st.title("🤖 AI Agent with Tools")
+st.markdown("This agent can search the web, answer questions, and generate images!")
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Chat input
+if prompt := st.chat_input("Ask me anything..."):
+    # Add user message to history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
     
-    # Display the image
-    from PIL import Image
-    img = Image.open(image_path)
-    st.image(img, caption=f"Generated: {prompt_used}", use_container_width=True)
+    # Get response from agent
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = run_agent(prompt)
+            st.markdown(response)
     
-    # Add download button
-    with open(image_path, "rb") as f:
-        st.download_button("📥 Download Image", f, file_name="generated_image.png", mime="image/png")
-else:
-    st.markdown(response)
+    # Add assistant response to history
+    st.session_state.messages.append({"role": "assistant", "content": response})
