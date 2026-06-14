@@ -39,15 +39,18 @@ def generate_image(prompt, width=1024, height=768):
             }
         )
         
-        # output is a list of URLs
+        # The output is a list of FileOutput objects
         if output and len(output) > 0:
-            # Download the image from the URL
-            response = requests.get(output[0])
-            if response.status_code == 200:
-                img = Image.open(BytesIO(response.content))
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                img.save(temp_file.name)
-                return temp_file.name
+            # Read the image data directly from the FileOutput object
+            image_data = output[0].read()
+            
+            # Load the image from the byte data
+            img = Image.open(BytesIO(image_data))
+            
+            # Save to a temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            img.save(temp_file.name)
+            return temp_file.name
         
         return None
         
