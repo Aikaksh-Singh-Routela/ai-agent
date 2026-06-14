@@ -8,8 +8,10 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
-import base64
-from horde_sdk import HordeAPI, APIKey
+
+# Correct imports from horde-sdk documentation
+from horde_sdk import AIHordeAPISimpleClient
+from horde_sdk.generations import ImageGenerationInput, ImageGenerationParams
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
@@ -21,8 +23,8 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
-# Initialize AI Horde API (no API key needed - anonymous access)
-horde_api = HordeAPI(api_key=APIKey("0000000000"))
+# Initialize AI Horde client (no API key needed - uses anonymous access)
+horde_client = AIHordeAPISimpleClient()
 
 # ============================================
 # IMAGE GENERATION FUNCTION (AI Horde - Free)
@@ -33,56 +35,47 @@ def generate_image(prompt, max_retries=30):
     try:
         print(f"Generating image for: {prompt}")
         
-        # Create the generation request
-        gen_input = {
-            "prompt": prompt,
-            "params": {
-                "width": 512,
-                "height": 512,
-                "steps": 25,
-                "n": 1
-            },
-            "nsfw": False,
-            "censor_nsfw": True,
-            "models": ["Anything Diffusion"]
-        }
+        # Create the generation request using the correct SDK types
+        generation_input = ImageGenerationInput(
+            prompt=prompt,
+            params=ImageGenerationParams(
+                width=512,
+                height=512,
+                steps=25,
+                n=1
+            ),
+            nsfw=False,
+            censor_nsfw=True
+        )
         
-        # Submit the request
+        # Submit the request using the simple client (handles polling automatically)
         print("Submitting request to AI Horde...")
-        response = horde_api.post_json_request("/api/v4/generate/async", gen_input)
-        generation_id = response.get("id")
-        print(f"Request submitted. Generation ID: {generation_id}")
         
-        # Poll for completion
-        for attempt in range(max_retries):
-            time.sleep(2)  # Wait 2 seconds between checks
-            print(f"Checking status... (attempt {attempt + 1}/{max_retries})")
+        # The simple client's generate method handles the entire process
+        # It submits and waits for completion automatically
+        generations = horde_client.generate(generation_input)
+        
+        if generations and len(generations) > 0:
+            # The image comes as base64 string
+            image_data = generations[0].img  # This is already bytes or base64
+            import base64
             
-            status = horde_api.get_json_request(f"/api/v4/generate/status/{generation_id}")
-            
-            if status.get("done") == 1:
-                print("Generation complete!")
-                generations = status.get("generations", [])
+            # If it's a string, it's base64; if it's bytes, use directly
+            if isinstance(image_data, str):
+                img_bytes = base64.b64decode(image_data)
+            else:
+                img_bytes = image_data
                 
-                if generations and len(generations) > 0:
-                    # Decode the base64 image
-                    image_data = base64.b64decode(generations[0].get("img"))
-                    img = Image.open(BytesIO(image_data))
-                    
-                    # Save to temporary file
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                    img.save(temp_file.name)
-                    print(f"Image saved to: {temp_file.name}")
-                    return temp_file.name
-                else:
-                    print("No generations returned")
-                    return None
-                    
-            elif attempt >= max_retries - 1:
-                print("Timeout waiting for generation")
-                return None
-        
-        return None
+            img = Image.open(BytesIO(img_bytes))
+            
+            # Save to temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            img.save(temp_file.name)
+            print(f"Image saved to: {temp_file.name}")
+            return temp_file.name
+        else:
+            print("No generations returned")
+            return None
         
     except Exception as e:
         print(f"AI Horde generation error: {e}")
