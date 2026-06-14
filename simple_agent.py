@@ -1,3 +1,4 @@
+import fal_client
 import streamlit as st
 import os
 import requests
@@ -8,12 +9,13 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
-import fal_client
+
+# Set fal.ai API key - this MUST be before any fal_client calls
+fal_client.api_key = st.secrets["FAL_API_KEY"]
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
-fal_api_key = st.secrets["FAL_API_KEY"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -21,38 +23,63 @@ client = Groq(api_key=groq_api_key)
 # Initialize Tavily client
 tavily = TavilyClient(api_key=tavily_api_key)
 
-# Set Fal.ai API key
-fal_client.api_key = fal_api_key
-
 # ============================================
-# IMAGE GENERATION FUNCTION (Fal.ai - Free & Fast)
+# IMAGE GENERATION FUNCTION (Fal.ai - Corrected)
 # ============================================
-def generate_image(prompt, width=1024, height=768):
-    """Generate an image using Fal.ai's Flux model (completely free)"""
-    try:
-        result = fal_client.subscribe(
-            "fal-ai/flux-schnell",
-            arguments={
-                "prompt": prompt,
-                "image_size": f"{width}x{height}"
-            }
-        )
-        
-        # Get the image URL from the result
-        image_url = result['images'][0]['url']
-        
-        # Download the image
-        response = requests.get(image_url)
-        if response.status_code == 200:
-            img = Image.open(BytesIO(response.content))
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-            img.save(temp_file.name)
-            return temp_file.name
-        
-        return None
-    except Exception as e:
-        print(f"Fal.ai image generation error: {e}")
-        return None
+def generate_image(prompt, width=512, height=512, max_retries=3):
+    """Generate an image using Fal.ai's Flux Schnell model with proper error handling"""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1}: Generating image for prompt: {prompt}")
+            
+            result = fal_client.subscribe(
+                "fal-ai/flux/schnell",
+                arguments={
+                    "prompt": prompt,
+                    "image_size": "square_hd"
+                },
+                timeout=60
+            )
+            
+            print(f"Result received: {result.keys() if result else 'None'}")
+            
+            if result and 'images' in result and len(result['images']) > 0:
+                image_url = result['images'][0]['url']
+                print(f"Image URL: {image_url}")
+                
+                response = requests.get(image_url, timeout=30)
+                if response.status_code == 200:
+                    img = Image.open(BytesIO(response.content))
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    img.save(temp_file.name)
+                    print(f"Image saved to: {temp_file.name}")
+                    return temp_file.name
+                else:
+                    print(f"Failed to download image: Status {response.status_code}")
+            
+            print(f"Attempt {attempt + 1}: No image in response")
+            
+        except fal_client.exceptions.AuthenticationError as auth_err:
+            print(f"Authentication error: {auth_err}")
+            return None
+            
+        except fal_client.exceptions.RateLimitError as rate_err:
+            print(f"Rate limit hit: {rate_err}")
+            if attempt == max_retries - 1:
+                return None
+            wait_time = 2 ** attempt
+            print(f"Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
+            
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                return None
+            time.sleep(2)
+    
+    return None
 
 # ============================================
 # WEB SEARCH FUNCTION (Tavily)
@@ -69,7 +96,6 @@ def web_search(query, max_results=5):
         
         results = []
         
-        # Include Tavily's AI-generated answer if available
         if response.get('answer'):
             results.append({
                 "title": "AI Summary",
@@ -77,7 +103,6 @@ def web_search(query, max_results=5):
                 "url": ""
             })
         
-        # Include individual search results
         for result in response.get('results', []):
             results.append({
                 "title": result.get("title"),
@@ -98,16 +123,13 @@ def run_agent(query):
         # Check if it's an image generation request
         image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render', 'an image of']
         if any(keyword in query.lower() for keyword in image_keywords):
-            # Extract the image prompt (remove the action words)
             image_prompt = query
             for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
                 image_prompt = image_prompt.lower().replace(keyword, '').strip()
             
-            # If nothing left, use the original query
             if not image_prompt or len(image_prompt) < 3:
                 image_prompt = query
             
-            # Generate the image using Fal.ai
             image_path = generate_image(image_prompt)
             
             if image_path:
@@ -118,7 +140,6 @@ def run_agent(query):
         # If not an image request, perform web search
         search_results = web_search(query)
         
-        # Build context from search results
         context_parts = []
         for i, result in enumerate(search_results[:5]):
             if result.get('body'):
@@ -129,7 +150,6 @@ def run_agent(query):
         
         context = "\n\n".join(context_parts) if context_parts else "No relevant information found."
         
-        # Create prompt for Groq
         prompt = f"""You are a helpful AI assistant. Answer the user's question based on the information below.
 
 SEARCH RESULTS:
@@ -145,7 +165,6 @@ INSTRUCTIONS:
 
 ANSWER:"""
 
-        # Get response from Groq
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
