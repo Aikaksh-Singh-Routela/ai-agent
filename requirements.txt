@@ -3,4 +3,4 @@ streamlit
 requests
 tavily-python
 Pillow
-fal-client
+fal-client>=0.2.0
