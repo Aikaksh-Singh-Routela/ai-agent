@@ -2,5 +2,3 @@
 streamlit
 requests
 tavily-python
-Pillow
-replicate
