@@ -8,10 +8,12 @@ from tavily import TavilyClient
 from PIL import Image
 from io import BytesIO
 import tempfile
+import replicate
 
 # Load API keys from Streamlit secrets
 groq_api_key = st.secrets["GROQ_API_KEY"]
 tavily_api_key = st.secrets["TAVILY_API_KEY"]
+replicate_api_token = st.secrets["REPLICATE_API_TOKEN"]
 
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
@@ -20,30 +22,38 @@ client = Groq(api_key=groq_api_key)
 tavily = TavilyClient(api_key=tavily_api_key)
 
 # ============================================
-# IMAGE GENERATION FUNCTION (Pollinations.ai)
+# IMAGE GENERATION FUNCTION (Replicate FLUX)
 # ============================================
-def generate_image(prompt, width=512, height=512, max_retries=3):
-    """Generate an image using Pollinations.ai with retry logic"""
-    encoded_prompt = requests.utils.quote(prompt)
-    
-    for attempt in range(max_retries):
-        try:
-            url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&enhance=false"
-            
-            response = requests.get(url, timeout=60)
+def generate_image(prompt, width=1024, height=768):
+    """Generate an image using Replicate's FLUX Schnell model"""
+    try:
+        # Using FLUX Schnell - fast and cheap (~$0.003 per image)
+        output = replicate.run(
+            "black-forest-labs/flux-schnell",
+            input={
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "num_outputs": 1,
+                "output_format": "png"
+            }
+        )
+        
+        # output is a list of URLs
+        if output and len(output) > 0:
+            # Download the image from the URL
+            response = requests.get(output[0])
             if response.status_code == 200:
                 img = Image.open(BytesIO(response.content))
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
                 img.save(temp_file.name)
                 return temp_file.name
-            else:
-                print(f"Attempt {attempt + 1} failed: Status {response.status_code}")
-                time.sleep(2)
-        except Exception as e:
-            print(f"Attempt {attempt + 1} error: {e}")
-            time.sleep(2)
-    
-    return None
+        
+        return None
+        
+    except Exception as e:
+        print(f"Replicate image generation error: {e}")
+        return None
 
 # ============================================
 # WEB SEARCH FUNCTION (Tavily)
@@ -60,6 +70,7 @@ def web_search(query, max_results=5):
         
         results = []
         
+        # Include Tavily's AI-generated answer if available
         if response.get('answer'):
             results.append({
                 "title": "AI Summary",
@@ -67,6 +78,7 @@ def web_search(query, max_results=5):
                 "url": ""
             })
         
+        # Include individual search results
         for result in response.get('results', []):
             results.append({
                 "title": result.get("title"),
@@ -87,23 +99,27 @@ def run_agent(query):
         # Check if it's an image generation request
         image_keywords = ['generate', 'create', 'draw', 'make', 'image of', 'picture of', 'render', 'an image of']
         if any(keyword in query.lower() for keyword in image_keywords):
+            # Extract the image prompt (remove the action words)
             image_prompt = query
             for keyword in ['generate', 'create', 'draw', 'make', 'an image of', 'a picture of', 'image of', 'picture of', 'render']:
                 image_prompt = image_prompt.lower().replace(keyword, '').strip()
             
+            # If nothing left, use the original query
             if not image_prompt or len(image_prompt) < 3:
                 image_prompt = query
             
+            # Generate the image using Replicate
             image_path = generate_image(image_prompt)
             
             if image_path:
                 return f"IMAGE_RESULT:{image_path}|{image_prompt}"
             else:
-                return "I couldn't generate that image right now. Please try a different description."
+                return "I couldn't generate that image right now. Please try a different description or check your Replicate credits."
         
         # If not an image request, perform web search
         search_results = web_search(query)
         
+        # Build context from search results
         context_parts = []
         for i, result in enumerate(search_results[:5]):
             if result.get('body'):
@@ -114,6 +130,7 @@ def run_agent(query):
         
         context = "\n\n".join(context_parts) if context_parts else "No relevant information found."
         
+        # Create prompt for Groq
         prompt = f"""You are a helpful AI assistant. Answer the user's question based on the information below.
 
 SEARCH RESULTS:
@@ -129,6 +146,7 @@ INSTRUCTIONS:
 
 ANSWER:"""
 
+        # Get response from Groq
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
