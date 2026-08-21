@@ -163,7 +163,7 @@ ANSWER:"""
 
         # Get response from Groq
         response = client.chat.completions.create(
-            model="groq/llama-3.1-8b-instant",
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3
         )
