@@ -163,7 +163,7 @@ ANSWER:"""
 
         # Get response from Groq
         response = client.chat.completions.create(
-            model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
+            model="openai/gpt-oss-20b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3
         )
